@@ -38,6 +38,9 @@ app:
     secret: koreanair-ops-dashboard-secret-key-for-demo-2024
   alert-service:
     url: http://localhost:8082
+  opensky:
+    username: ${OPENSKY_USERNAME:}
+    password: ${OPENSKY_PASSWORD:}
 
 ---
 spring:

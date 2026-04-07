@@ -3,6 +3,8 @@ package com.koreanair.ops.flight.controller
 import com.koreanair.ops.flight.dto.*
 import com.koreanair.ops.flight.model.FlightStatus
 import com.koreanair.ops.flight.service.FlightService
+import com.koreanair.ops.flight.service.OpenSkyClient
+import com.koreanair.ops.flight.service.OpenSkyState
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.HttpStatus
@@ -11,7 +13,10 @@ import org.springframework.web.bind.annotation.*
 @RestController
 @RequestMapping("/api/flights")
 @Tag(name = "Flights", description = "Flight management operations")
-class FlightController(private val flightService: FlightService) {
+class FlightController(
+    private val flightService: FlightService,
+    private val openSkyClient: OpenSkyClient
+) {
 
     @GetMapping
     @Operation(summary = "List all flights with optional filters")
@@ -26,9 +31,20 @@ class FlightController(private val flightService: FlightService) {
         flightService.getFlightById(id)
 
     @GetMapping("/live-tracking")
-    @Operation(summary = "Get in-flight aircraft with positions (30s polling)")
+    @Operation(summary = "Get in-flight aircraft with positions (mock data)")
     fun getLiveTracking(): List<FlightWithPositionResponse> =
         flightService.getLiveTracking()
+
+    @GetMapping("/opensky")
+    @Operation(summary = "Real Korean Air positions from OpenSky Network (5min polling)")
+    fun getOpenSkyPositions(): Map<String, Any> {
+        val positions = openSkyClient.getKoreanAirPositions()
+        return mapOf(
+            "source" to if (openSkyClient.isEnabled()) "opensky" else "disabled",
+            "count" to positions.size,
+            "aircraft" to positions.values
+        )
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
