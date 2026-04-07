@@ -41,6 +41,8 @@ app:
   opensky:
     username: davidjoo-api-client
     password: DsJnd7gQrCai3h8v23juLaVbP4eoh9J7
+  kac:
+    service-key: ${KAC_SERVICE_KEY:}
 
 ---
 spring:

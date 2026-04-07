@@ -3,8 +3,8 @@ package com.koreanair.ops.flight.controller
 import com.koreanair.ops.flight.dto.*
 import com.koreanair.ops.flight.model.FlightStatus
 import com.koreanair.ops.flight.service.FlightService
+import com.koreanair.ops.flight.service.KacApiClient
 import com.koreanair.ops.flight.service.OpenSkyClient
-import com.koreanair.ops.flight.service.OpenSkyState
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.HttpStatus
@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.*
 @Tag(name = "Flights", description = "Flight management operations")
 class FlightController(
     private val flightService: FlightService,
-    private val openSkyClient: OpenSkyClient
+    private val openSkyClient: OpenSkyClient,
+    private val kacApiClient: KacApiClient
 ) {
 
     @GetMapping
@@ -49,6 +50,63 @@ class FlightController(
     @GetMapping("/opensky/stats")
     @Operation(summary = "Korean Air fleet stats from OpenSky")
     fun getOpenSkyStats() = openSkyClient.getStats()
+
+    @GetMapping("/kac")
+    @Operation(summary = "Korean Air flights from KAC API (한국공항공사 실시간 현황)")
+    fun getKacFlights(): Map<String, Any> {
+        val stats = kacApiClient.getStats()
+        return mapOf(
+            "source" to stats.source,
+            "stats" to stats,
+            "flights" to kacApiClient.getKoreanAirOnly()
+        )
+    }
+
+    @GetMapping("/kac/stats")
+    @Operation(summary = "KAC flight stats")
+    fun getKacStats() = kacApiClient.getStats()
+
+    @GetMapping("/combined")
+    @Operation(summary = "Combined view: KAC schedule + OpenSky positions for Korean Air")
+    fun getCombinedFlights(): Map<String, Any> {
+        val kacFlights = kacApiClient.getKoreanAirOnly()
+        val openskyPositions = openSkyClient.getAll().associateBy {
+            it.callsign.replace("KAL", "KE")
+        }
+
+        val combined = kacFlights.map { kac ->
+            val flightNum = kac.airFln ?: ""
+            val position = openskyPositions[flightNum]
+            mapOf(
+                "flightNumber" to flightNum,
+                "airline" to (kac.airlineEnglish ?: "Korean Air"),
+                "departureAirport" to (kac.boardingEng ?: "-"),
+                "arrivalAirport" to (kac.arrivedEng ?: "-"),
+                "departureKor" to (kac.boardingKor ?: "-"),
+                "arrivalKor" to (kac.arrivedKor ?: "-"),
+                "scheduledTime" to (kac.std ?: "-"),
+                "estimatedTime" to (kac.etd ?: kac.std ?: "-"),
+                "status" to (kac.rmkEng ?: "-"),
+                "statusKor" to (kac.rmkKor ?: "-"),
+                "direction" to if (kac.io == "O") "DEPARTURE" else "ARRIVAL",
+                "lineType" to (kac.line ?: "-"),
+                "hasPosition" to (position != null),
+                "latitude" to position?.latitude,
+                "longitude" to position?.longitude,
+                "altitude" to position?.altitude,
+                "velocity" to position?.velocity,
+                "heading" to position?.heading
+            )
+        }
+
+        return mapOf(
+            "kacSource" to kacApiClient.getStats().source,
+            "openskySource" to openSkyClient.getStats().source,
+            "totalFlights" to combined.size,
+            "withPosition" to combined.count { it["hasPosition"] == true },
+            "flights" to combined
+        )
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

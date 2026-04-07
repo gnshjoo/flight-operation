@@ -17,8 +17,24 @@ export default function StatsBar() {
 
   useEffect(() => {
     const load = async () => {
+      // Try KAC stats first (has departure/arrival/delay counts)
       try {
-        // Try OpenSky stats first
+        const kac = await flightApi.getKacStats();
+        if (kac.source === 'kac' && kac.koreanAir > 0) {
+          setStats({
+            total: kac.koreanAir,
+            inFlight: kac.departed,
+            onGround: kac.arrived,
+            source: 'kac',
+            delayed: kac.delayed,
+            cancelled: kac.cancelled,
+          });
+          return;
+        }
+      } catch {}
+
+      // Try OpenSky stats
+      try {
         const opensky = await flightApi.getOpenSkyStats();
         if (opensky.source === 'opensky' && opensky.total > 0) {
           setStats(opensky);
@@ -56,9 +72,14 @@ export default function StatsBar() {
     );
   }
 
-  const isOpenSky = stats.source === 'opensky';
+  const isRealData = stats.source === 'opensky' || stats.source === 'kac';
 
-  const cards = isOpenSky ? [
+  const cards = stats.source === 'kac' ? [
+    { label: 'KE Flights', value: stats.total, color: '#1a1a2e', sub: '한국공항공사 실시간' },
+    { label: 'Departed', value: stats.inFlight, color: '#0072CE', sub: '출발' },
+    { label: 'Arrived', value: stats.onGround, color: '#059669', sub: '도착' },
+    { label: 'Delayed', value: stats.delayed ?? 0, color: '#d97706', sub: '지연' },
+  ] : isRealData ? [
     { label: 'Total Aircraft', value: stats.total, color: '#1a1a2e', sub: 'tracked by OpenSky' },
     { label: 'In Flight', value: stats.inFlight, color: '#0072CE', sub: 'currently airborne' },
     { label: 'On Ground', value: stats.onGround, color: '#059669', sub: 'at airports' },

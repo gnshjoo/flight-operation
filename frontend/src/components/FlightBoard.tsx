@@ -36,16 +36,43 @@ export default function FlightBoard() {
 
   useEffect(() => {
     const load = async () => {
+      // Priority 1: Combined (KAC + OpenSky)
       try {
-        // Try OpenSky first
+        const combined = await flightApi.getCombined();
+        if (combined.totalFlights > 0) {
+          const mapped: DisplayFlight[] = combined.flights.map((f: any) => {
+            const status = f.status || '-';
+            const style = status.includes('DEPART') ? MOCK_STYLES.DEPARTED
+              : status.includes('ARRIV') ? MOCK_STYLES.ARRIVED
+              : status.includes('DELAY') ? MOCK_STYLES.DELAYED
+              : status.includes('CANCEL') ? MOCK_STYLES.CANCELLED
+              : status.includes('BOARD') ? MOCK_STYLES.BOARDING
+              : IN_FLIGHT_STYLE;
+            return {
+              id: `${f.flightNumber}-${f.scheduledTime}-${f.direction}`,
+              callsign: f.flightNumber,
+              route: `${f.departureAirport} → ${f.arrivalAirport}`,
+              altitude: f.altitude ? `${Math.round(f.altitude * 3.281).toLocaleString()}ft` : f.scheduledTime || '-',
+              speed: f.velocity ? `${Math.round(f.velocity * 1.944)}kts` : f.estimatedTime || '-',
+              status: f.statusKor || status,
+              statusStyle: style,
+            };
+          });
+          setFlights(mapped);
+          setSource(combined.kacSource === 'kac' ? 'kac+opensky' : 'opensky');
+          setLoading(false);
+          return;
+        }
+      } catch {}
+
+      // Priority 2: OpenSky only
+      try {
         const opensky = await flightApi.getOpenSky();
         if (opensky.source === 'opensky' && opensky.aircraft?.length > 0) {
           const mapped: DisplayFlight[] = opensky.aircraft.map((a: any) => ({
             id: a.callsign,
             callsign: formatCallsign(a.callsign),
-            route: a.departureAirport && a.arrivalAirport
-              ? `${a.departureAirport} → ${a.arrivalAirport}`
-              : '-',
+            route: a.departureAirport && a.arrivalAirport ? `${a.departureAirport} → ${a.arrivalAirport}` : '-',
             altitude: a.onGround ? '-' : `${Math.round(a.altitude * 3.281).toLocaleString()}ft`,
             speed: a.onGround ? '-' : `${Math.round(a.velocity * 1.944)}kts`,
             status: a.onGround ? 'ON GROUND' : 'IN FLIGHT',
@@ -58,7 +85,7 @@ export default function FlightBoard() {
         }
       } catch {}
 
-      // Fallback to mock
+      // Priority 3: Mock data
       try {
         const mock = await flightApi.getAll();
         setFlights(mock.map((f: any) => ({
