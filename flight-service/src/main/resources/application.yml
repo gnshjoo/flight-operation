@@ -39,8 +39,8 @@ app:
   alert-service:
     url: http://localhost:8082
   opensky:
-    username: ${OPENSKY_USERNAME:}
-    password: ${OPENSKY_PASSWORD:}
+    username: davidjoo-api-client
+    password: DsJnd7gQrCai3h8v23juLaVbP4eoh9J7
 
 ---
 spring:

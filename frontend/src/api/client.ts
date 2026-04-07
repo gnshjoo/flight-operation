@@ -12,6 +12,7 @@ export const flightApi = {
   getById: (id: number) => fetchJson<any>(`${FLIGHT_API}/api/flights/${id}`),
   getLiveTracking: () => fetchJson<any[]>(`${FLIGHT_API}/api/flights/live-tracking`),
   getOpenSky: () => fetchJson<any>(`${FLIGHT_API}/api/flights/opensky`),
+  getOpenSkyStats: () => fetchJson<any>(`${FLIGHT_API}/api/flights/opensky/stats`),
   getDailyStats: () => fetchJson<any>(`${FLIGHT_API}/api/stats/daily`),
   getDelayRate: () => fetchJson<any>(`${FLIGHT_API}/api/stats/delay-rate`),
   getDepartures: (code: string) => fetchJson<any[]>(`${FLIGHT_API}/api/airports/${code}/departures`),

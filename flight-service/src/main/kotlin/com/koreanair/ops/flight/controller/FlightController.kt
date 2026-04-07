@@ -36,15 +36,19 @@ class FlightController(
         flightService.getLiveTracking()
 
     @GetMapping("/opensky")
-    @Operation(summary = "Real Korean Air positions from OpenSky Network (5min polling)")
-    fun getOpenSkyPositions(): Map<String, Any> {
-        val positions = openSkyClient.getKoreanAirPositions()
+    @Operation(summary = "All Korean Air aircraft from OpenSky (real data, 5min poll)")
+    fun getOpenSkyAll(): Map<String, Any> {
+        val stats = openSkyClient.getStats()
         return mapOf(
-            "source" to if (openSkyClient.isEnabled()) "opensky" else "disabled",
-            "count" to positions.size,
-            "aircraft" to positions.values
+            "source" to stats.source,
+            "stats" to stats,
+            "aircraft" to openSkyClient.getAll()
         )
     }
+
+    @GetMapping("/opensky/stats")
+    @Operation(summary = "Korean Air fleet stats from OpenSky")
+    fun getOpenSkyStats() = openSkyClient.getStats()
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

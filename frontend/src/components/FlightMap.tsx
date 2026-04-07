@@ -20,12 +20,14 @@ interface OpenSkyResponse {
   aircraft: AircraftPosition[];
 }
 
-function createIcon(heading: number) {
+function createIcon(heading: number, onGround: boolean) {
+  const emoji = onGround ? '🛬' : '✈️';
+  const opacity = onGround ? '0.7' : '1';
   return new L.DivIcon({
-    html: `<div style="font-size:20px;transform:rotate(${heading}deg)">✈️</div>`,
+    html: `<div style="font-size:18px;transform:rotate(${onGround ? 0 : heading}deg);opacity:${opacity}">${emoji}</div>`,
     className: '',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
   });
 }
 
@@ -43,8 +45,8 @@ export default function FlightMap() {
       try {
         // Try OpenSky first
         const opensky: OpenSkyResponse = await flightApi.getOpenSky();
-        if (opensky.source === 'opensky' && opensky.count > 0) {
-          setAircraft(opensky.aircraft.filter(a => !a.onGround));
+        if (opensky.source === 'opensky' && opensky.aircraft?.length > 0) {
+          setAircraft(opensky.aircraft);
           setSource('opensky');
           return;
         }
@@ -111,7 +113,7 @@ export default function FlightMap() {
             <Marker
               key={`${a.callsign}-${i}`}
               position={[a.latitude, a.longitude]}
-              icon={createIcon(a.heading)}
+              icon={createIcon(a.heading, a.onGround)}
             >
               <Popup>
                 <strong>{formatCallsign(a.callsign)}</strong><br />
