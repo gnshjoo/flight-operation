@@ -25,7 +25,7 @@ export default function AlertPanel({ alerts, onAcknowledge }: Props) {
   const activeCount = alerts.filter(a => !a.acknowledged).length;
 
   return (
-    <div style={{ width: 340, borderLeft: '1px solid #e2e8f0', background: 'white', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ width: 340, minWidth: 340, borderLeft: '1px solid #e2e8f0', background: 'white', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: 16, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Alerts</h3>
         {activeCount > 0 && (

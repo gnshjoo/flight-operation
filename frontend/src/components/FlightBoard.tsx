@@ -117,7 +117,7 @@ export default function FlightBoard() {
 
   if (loading) {
     return (
-      <div style={{ padding: '16px 24px', flex: 2 }}>
+      <div style={{ padding: '16px 24px', flex: 1 }}>
         <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Flight Board</h2>
         {[1,2,3,4,5].map(i => (
           <div key={i} style={{ height: 40, background: '#f1f5f9', borderRadius: 6, marginBottom: 8 }} />
@@ -127,7 +127,7 @@ export default function FlightBoard() {
   }
 
   return (
-    <div style={{ flex: 2, overflow: 'auto', padding: '16px 24px' }}>
+    <div style={{ flex: 1, padding: '16px 24px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>Flight Board</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -158,6 +158,7 @@ export default function FlightBoard() {
         </select>
       </div>
 
+      <div style={{ flex: 1, overflowY: 'auto' }}>
       {filtered.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>
           No flights found.
@@ -192,6 +193,7 @@ export default function FlightBoard() {
           </tbody>
         </table>
       )}
+      </div>
     </div>
   );
 }
