@@ -3,8 +3,8 @@ spring:
     name: flight-service
   datasource:
     url: jdbc:mysql://localhost:3306/flight_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-    username: root
-    password: koreanair
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -35,14 +35,14 @@ springdoc:
 
 app:
   jwt:
-    secret: koreanair-ops-dashboard-secret-key-for-demo-2024
+    secret: ${JWT_SECRET}
   alert-service:
     url: http://localhost:8082
   opensky:
-    username: davidjoo-api-client
-    password: DsJnd7gQrCai3h8v23juLaVbP4eoh9J7
+    username: ${OPENSKY_USERNAME}
+    password: ${OPENSKY_PASSWORD}
   kac:
-    service-key: ${KAC_SERVICE_KEY:5da7a97ae420082e8a4cd99174f7fbe35493b97a19881c00620904994ae75491}
+    service-key: ${KAC_SERVICE_KEY}
 
 ---
 spring:

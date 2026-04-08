@@ -15,6 +15,6 @@ spring:
 
 app:
   jwt:
-    secret: koreanair-ops-dashboard-secret-key-for-demo-2024
+    secret: test-secret-key-for-testing-only
   alert-service:
     url: http://localhost:9999
