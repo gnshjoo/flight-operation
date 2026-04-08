@@ -42,7 +42,7 @@ app:
     username: davidjoo-api-client
     password: DsJnd7gQrCai3h8v23juLaVbP4eoh9J7
   kac:
-    service-key: ${KAC_SERVICE_KEY:}
+    service-key: ${KAC_SERVICE_KEY:5da7a97ae420082e8a4cd99174f7fbe35493b97a19881c00620904994ae75491}
 
 ---
 spring:

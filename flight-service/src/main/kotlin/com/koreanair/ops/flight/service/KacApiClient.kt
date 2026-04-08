@@ -1,41 +1,30 @@
 package com.koreanair.ops.flight.service
 
-import com.fasterxml.jackson.dataformat.xml.XmlMapper
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * 한국공항공사 항공기운항정보 OpenAPI 클라이언트
- *
- * APIs:
- *   - getFlightStatusList: 실시간 운항 현황 (편명, 출발/도착, 상태, 시간)
- *   - getIflightScheduleList: 국제선 스케줄
- *   - getDflightScheduleList: 국내선 스케줄
- *   - getAirportCodeList: 공항코드
- *
- * 관리 공항: GMP(김포), PUS(부산), CJU(제주), TAE(대구), KWJ(광주), RSU(여수), USN(울산), MWX(무안), HIN(사천), WJU(원주), YNY(양양), CJJ(청주), KUV(군산), KPO(포항)
- * 주의: ICN(인천)은 인천국제공항공사 관할, 이 API에 없음
- */
 @Component
 class KacApiClient(
-    @Value("\${app.kac.service-key:}") private val serviceKey: String
+    @Value("\${app.kac.service-key:}") private val serviceKey: String,
+    private val objectMapper: ObjectMapper
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val client = RestClient.create()
-    private val xmlMapper = XmlMapper().registerKotlinModule()
     private val cache = ConcurrentHashMap<String, KacFlightStatus>()
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
 
     companion object {
-        const val BASE_URL = "http://openapi.airport.co.kr/service/rest"
-        val KAC_AIRPORTS = listOf("GMP", "PUS", "CJU", "TAE", "KWJ", "RSU", "USN", "MWX", "HIN", "WJU", "YNY", "CJJ")
+        const val BASE_URL = "https://api.odcloud.kr/api/FlightStatusListDTL/v1/getFlightStatusListDetail"
+        const val PER_PAGE = 100
     }
 
     fun isEnabled(): Boolean = serviceKey.isNotBlank()
@@ -44,130 +33,138 @@ class KacApiClient(
 
     fun getKoreanAirOnly(): List<KacFlightStatus> =
         cache.values.filter { it.airFln?.startsWith("KE") == true }
+            .sortedBy { it.std }
 
     fun getStats(): KacStats {
         val keFlights = getKoreanAirOnly()
         return KacStats(
             total = cache.size,
             koreanAir = keFlights.size,
-            departed = keFlights.count { it.rmkEng?.contains("DEPART", true) == true },
-            arrived = keFlights.count { it.rmkEng?.contains("ARRIV", true) == true },
-            delayed = keFlights.count { it.rmkEng?.contains("DELAY", true) == true },
-            cancelled = keFlights.count { it.rmkEng?.contains("CANCEL", true) == true },
-            source = if (isEnabled() && cache.isNotEmpty()) "kac" else "unavailable"
+            departed = keFlights.count { it.rmkEng.orEmpty().contains("DEPART", true) },
+            arrived = keFlights.count { it.rmkEng.orEmpty().contains("ARRIV", true) },
+            delayed = keFlights.count { it.rmkEng.orEmpty().contains("DELAY", true) },
+            cancelled = keFlights.count { it.rmkEng.orEmpty().contains("CANCEL", true) },
+            boarding = keFlights.count {
+                val rmk = it.rmkKor ?: ""
+                rmk.contains("수속") || rmk.contains("탑승")
+            },
+            source = if (isEnabled() && keFlights.isNotEmpty()) "kac" else "unavailable"
         )
     }
 
-    @Scheduled(initialDelay = 5000, fixedRate = 300_000) // 5 sec delay, then every 5 min
+    @Scheduled(initialDelay = 3000, fixedRate = 300_000)
     fun pollFlightStatus() {
         if (!isEnabled()) return
 
-        log.info("KAC: Polling flight status for Korean Air...")
-        var totalLoaded = 0
+        val today = LocalDate.now().format(dateFormatter)
+        log.info("KAC: Polling flights for {}...", today)
 
-        // Poll major airports for both departures and arrivals
-        for (airport in listOf("GMP", "PUS", "CJU")) {
-            for (ioType in listOf("O", "I")) { // O=departure, I=arrival
-                for (lineType in listOf("D", "I")) { // D=domestic, I=international
-                    try {
-                        val flights = fetchFlightStatus(airport, ioType, lineType)
-                        flights.forEach { flight ->
-                            val key = "${flight.airFln}-${flight.std}-${flight.io}"
-                            cache[key] = flight
-                        }
-                        totalLoaded += flights.size
-                    } catch (e: Exception) {
-                        log.warn("KAC: Failed to poll {} {} {}: {}", airport, ioType, lineType, e.message)
-                    }
+        try {
+            // 1. Get total count
+            val first = fetchPage(1) ?: return
+            val totalPages = ((first.totalCount ?: 0) + PER_PAGE - 1) / PER_PAGE
+            if (totalPages == 0) return
+
+            // 2. Binary search for the first page containing today's date
+            val startPage = binarySearchDate(today, 1, totalPages)
+            if (startPage == -1) {
+                log.warn("KAC: No data found for {}", today)
+                return
+            }
+
+            // 3. Collect all today's flights from startPage forward
+            val todayFlights = mutableListOf<KacFlightStatus>()
+            for (page in startPage..minOf(startPage + 30, totalPages)) {
+                val result = fetchPage(page) ?: break
+                val flights = result.data ?: break
+                val todayOnPage = flights.filter { it.flightDate == today }
+                todayFlights.addAll(todayOnPage)
+                // Stop if we've moved past today
+                if (flights.any { (it.flightDate ?: "") > today } && todayOnPage.isEmpty()) break
+            }
+
+            cache.clear()
+            todayFlights.forEach { f ->
+                cache[f.ufid ?: "${f.airFln}-${f.std}-${f.io}"] = f
+            }
+
+            val keCount = cache.values.count { it.airFln?.startsWith("KE") == true }
+            log.info("KAC: {} flights today, {} Korean Air", cache.size, keCount)
+        } catch (e: Exception) {
+            log.warn("KAC: Poll failed: {}", e.message)
+        }
+    }
+
+    /**
+     * Binary search for the first page containing the target date.
+     * Data is chronologically ordered.
+     */
+    private fun binarySearchDate(targetDate: String, low: Int, high: Int): Int {
+        var lo = low
+        var hi = high
+        var result = -1
+
+        while (lo <= hi) {
+            val mid = lo + (hi - lo) / 2
+            val page = fetchPage(mid) ?: break
+            val dates = page.data?.mapNotNull { it.flightDate }?.toSet() ?: break
+
+            when {
+                dates.contains(targetDate) -> {
+                    result = mid
+                    hi = mid - 1 // Keep searching left for the first page
                 }
+                dates.all { it < targetDate } -> lo = mid + 1
+                else -> hi = mid - 1
             }
         }
-
-        // Remove non-KE flights to keep cache focused
-        cache.entries.removeIf { it.value.airFln?.startsWith("KE") != true }
-
-        log.info("KAC: {} total flights loaded, {} Korean Air flights cached", totalLoaded, cache.size)
+        return result
     }
 
-    private fun fetchFlightStatus(
-        airportCode: String,
-        ioType: String, // I=arrival, O=departure
-        lineType: String // D=domestic, I=international
-    ): List<KacFlightStatus> {
-        val url = "$BASE_URL/FlightStatusList/getFlightStatusList" +
-                "?ServiceKey=$serviceKey" +
-                "&schAirCode=$airportCode" +
-                "&schIOType=$ioType" +
-                "&schLineType=$lineType" +
-                "&pageNo=1" +
-                "&numOfRows=100"
-
-        val xml = client.get()
-            .uri(url)
-            .retrieve()
-            .body(String::class.java) ?: return emptyList()
-
-        return parseFlightStatusXml(xml)
-    }
-
-    fun parseFlightStatusXml(xml: String): List<KacFlightStatus> {
+    private fun fetchPage(page: Int): KacApiResponse? {
         return try {
-            val response = xmlMapper.readValue(xml, KacResponse::class.java)
-            if (response.header?.resultCode != "00") {
-                log.warn("KAC API error: {} {}", response.header?.resultCode, response.header?.resultMsg)
-                return emptyList()
-            }
-            response.body?.items?.item ?: emptyList()
+            val url = "$BASE_URL?page=$page&perPage=$PER_PAGE&serviceKey=$serviceKey"
+            val body = client.get()
+                .uri(url)
+                .header("Authorization", serviceKey)
+                .retrieve()
+                .body(String::class.java) ?: return null
+            objectMapper.readValue(body, KacApiResponse::class.java)
         } catch (e: Exception) {
-            log.warn("KAC XML parse error: {}", e.message)
-            emptyList()
+            null
         }
     }
 }
 
-// XML Response models
-@JacksonXmlRootElement(localName = "response")
-data class KacResponse(
-    @JacksonXmlProperty(localName = "header")
-    val header: KacHeader? = null,
-    @JacksonXmlProperty(localName = "body")
-    val body: KacBody? = null
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class KacApiResponse(
+    val currentCount: Int? = null,
+    val totalCount: Int? = null,
+    val data: List<KacFlightStatus>? = null
 )
 
-data class KacHeader(
-    val resultCode: String? = null,
-    val resultMsg: String? = null
-)
-
-data class KacBody(
-    val items: KacItems? = null,
-    val numOfRows: Int? = null,
-    val pageNo: Int? = null,
-    val totalCount: Int? = null
-)
-
-data class KacItems(
-    @JacksonXmlElementWrapper(useWrapping = false)
-    @JacksonXmlProperty(localName = "item")
-    val item: List<KacFlightStatus>? = null
-)
-
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class KacFlightStatus(
-    val airFln: String? = null,         // 항공편명 (KE1131)
-    val airlineKorean: String? = null,  // 항공사 국문 (대한항공)
-    val airlineEnglish: String? = null, // 항공사 영문 (Korean Air)
-    val airport: String? = null,        // 기준공항코드 (GMP)
-    val boardingKor: String? = null,    // 출발공항 국문
-    val boardingEng: String? = null,    // 출발공항 영문
-    val arrivedKor: String? = null,     // 도착공항 국문
-    val arrivedEng: String? = null,     // 도착공항 영문
-    val city: String? = null,           // 운항구간코드 (PUS)
-    val std: String? = null,            // 예정시간 (0625)
-    val etd: String? = null,            // 변경시간 (0640)
-    val io: String? = null,             // 출/도착 (I=도착, O=출발)
-    val line: String? = null,           // 국내/국제
-    val rmkKor: String? = null,         // 상태 국문 (출발, 도착, 지연, 결항)
-    val rmkEng: String? = null          // 상태 영문 (DEPARTED, ARRIVED, DELAYED)
+    @JsonProperty("AIR_FLN") val airFln: String? = null,
+    @JsonProperty("AIRLINE_KOREAN") val airlineKorean: String? = null,
+    @JsonProperty("AIRLINE_ENGLISH") val airlineEnglish: String? = null,
+    @JsonProperty("AIRPORT") val airport: String? = null,
+    @JsonProperty("BOARDING_KOR") val boardingKor: String? = null,
+    @JsonProperty("BOARDING_ENG") val boardingEng: String? = null,
+    @JsonProperty("ARRIVED_KOR") val arrivedKor: String? = null,
+    @JsonProperty("ARRIVED_ENG") val arrivedEng: String? = null,
+    @JsonProperty("CITY") val city: String? = null,
+    @JsonProperty("STD") val std: String? = null,
+    @JsonProperty("ETD") val etd: String? = null,
+    @JsonProperty("IO") val io: String? = null,
+    @JsonProperty("LINE") val line: String? = null,
+    @JsonProperty("LINE_CODE") val lineCode: String? = null,
+    @JsonProperty("RMK_KOR") val rmkKor: String? = null,
+    @JsonProperty("RMK_ENG") val rmkEng: String? = null,
+    @JsonProperty("GATE") val gate: String? = null,
+    @JsonProperty("BAGGAGE_CLAIM") val baggageClaim: String? = null,
+    @JsonProperty("FLIGHT_DATE") val flightDate: String? = null,
+    @JsonProperty("UFID") val ufid: String? = null
 )
 
 data class KacStats(
@@ -177,5 +174,6 @@ data class KacStats(
     val arrived: Int,
     val delayed: Int,
     val cancelled: Int,
+    val boarding: Int = 0,
     val source: String
 )
