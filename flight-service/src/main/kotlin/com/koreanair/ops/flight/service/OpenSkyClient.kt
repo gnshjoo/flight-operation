@@ -36,7 +36,7 @@ class OpenSkyClient(
         "lamin=30&lamax=65&lomin=-15&lomax=55",
     )
 
-    fun isEnabled(): Boolean = username.isNotBlank() && password.isNotBlank()
+    fun isEnabled(): Boolean = true
 
     fun getAll(): List<OpenSkyState> {
         fetchIfStale()
