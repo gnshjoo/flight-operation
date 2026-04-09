@@ -70,18 +70,21 @@ class OpenSkyClient(
         if (Duration.between(lastFetchTime, Instant.now()) < cacheTtl) return
         lastFetchTime = Instant.now()
 
-        val credentials = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+        val hasCredentials = username.isNotBlank() && password.isNotBlank()
         val found = ConcurrentHashMap<String, OpenSkyState>()
 
         for ((index, bbox) in regions.withIndex()) {
             try {
                 val url = "$baseUrl/api/states/all?$bbox"
-                val request = HttpRequest.newBuilder()
+                val builder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .header("Authorization", "Basic $credentials")
                     .timeout(Duration.ofSeconds(30))
                     .GET()
-                    .build()
+                if (hasCredentials) {
+                    val credentials = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+                    builder.header("Authorization", "Basic $credentials")
+                }
+                val request = builder.build()
 
                 val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
 
