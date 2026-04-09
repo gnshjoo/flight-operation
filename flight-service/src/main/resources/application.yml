@@ -39,6 +39,7 @@ app:
   alert-service:
     url: http://localhost:8082
   opensky:
+    base-url: ${OPENSKY_BASE_URL:https://opensky-network.org}
     username: ${OPENSKY_USERNAME}
     password: ${OPENSKY_PASSWORD}
   kac:

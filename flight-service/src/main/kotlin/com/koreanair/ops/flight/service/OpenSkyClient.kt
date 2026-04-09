@@ -4,13 +4,13 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -18,31 +18,43 @@ import java.util.concurrent.ConcurrentHashMap
 class OpenSkyClient(
     @Value("\${app.opensky.username:}") private val username: String,
     @Value("\${app.opensky.password:}") private val password: String,
+    @Value("\${app.opensky.base-url:https://opensky-network.org}") private val baseUrl: String,
     private val objectMapper: ObjectMapper
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val cache = ConcurrentHashMap<String, OpenSkyState>()
+    private var lastFetchTime: Instant = Instant.EPOCH
+    private val cacheTtl = Duration.ofMinutes(5)
 
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
 
-    // Korean Air operates across these regions — split to reduce response size
     private val regions = listOf(
-        "lamin=10&lamax=55&lomin=90&lomax=155",   // East Asia (Korea, Japan, China, SE Asia)
-        "lamin=20&lamax=65&lomin=-140&lomax=-50",  // North America
-        "lamin=30&lamax=65&lomin=-15&lomax=55",    // Europe & Middle East
+        "lamin=10&lamax=55&lomin=90&lomax=155",
+        "lamin=20&lamax=65&lomin=-140&lomax=-50",
+        "lamin=30&lamax=65&lomin=-15&lomax=55",
     )
 
     fun isEnabled(): Boolean = username.isNotBlank() && password.isNotBlank()
 
-    fun getAll(): List<OpenSkyState> = cache.values.toList()
+    fun getAll(): List<OpenSkyState> {
+        fetchIfStale()
+        return cache.values.toList()
+    }
 
-    fun getInFlight(): List<OpenSkyState> = cache.values.filter { !it.onGround }
+    fun getInFlight(): List<OpenSkyState> {
+        fetchIfStale()
+        return cache.values.filter { !it.onGround }
+    }
 
-    fun getOnGround(): List<OpenSkyState> = cache.values.filter { it.onGround }
+    fun getOnGround(): List<OpenSkyState> {
+        fetchIfStale()
+        return cache.values.filter { it.onGround }
+    }
 
     fun getStats(): OpenSkyStats {
+        fetchIfStale()
         val all = cache.values.toList()
         return OpenSkyStats(
             total = all.size,
@@ -52,16 +64,18 @@ class OpenSkyClient(
         )
     }
 
-    @Scheduled(initialDelay = 0, fixedRate = 300_000)
-    fun pollOpenSky() {
+    @Synchronized
+    private fun fetchIfStale() {
         if (!isEnabled()) return
+        if (Duration.between(lastFetchTime, Instant.now()) < cacheTtl) return
+        lastFetchTime = Instant.now()
 
         val credentials = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
         val found = ConcurrentHashMap<String, OpenSkyState>()
 
         for ((index, bbox) in regions.withIndex()) {
             try {
-                val url = "https://opensky-network.org/api/states/all?$bbox"
+                val url = "$baseUrl/api/states/all?$bbox"
                 val request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", "Basic $credentials")
