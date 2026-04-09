@@ -6,7 +6,12 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import org.springframework.web.client.RestClient
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
 @Component
@@ -16,8 +21,18 @@ class OpenSkyClient(
     private val objectMapper: ObjectMapper
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val client = RestClient.create()
     private val cache = ConcurrentHashMap<String, OpenSkyState>()
+
+    private val httpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .build()
+
+    // Korean Air operates across these regions — split to reduce response size
+    private val regions = listOf(
+        "lamin=10&lamax=55&lomin=90&lomax=155",   // East Asia (Korea, Japan, China, SE Asia)
+        "lamin=20&lamax=65&lomin=-140&lomax=-50",  // North America
+        "lamin=30&lamax=65&lomin=-15&lomax=55",    // Europe & Middle East
+    )
 
     fun isEnabled(): Boolean = username.isNotBlank() && password.isNotBlank()
 
@@ -37,57 +52,75 @@ class OpenSkyClient(
         )
     }
 
-    @Scheduled(initialDelay = 0, fixedRate = 300_000) // Start immediately, then every 5 min
+    @Scheduled(initialDelay = 0, fixedRate = 300_000)
     fun pollOpenSky() {
         if (!isEnabled()) return
 
-        try {
-            val url = "https://opensky-network.org/api/states/all?operator_icao=KAL"
-            val response = client.get()
-                .uri(url)
-                .headers { it.setBasicAuth(username, password) }
-                .retrieve()
-                .body(String::class.java)
+        val credentials = Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+        val found = ConcurrentHashMap<String, OpenSkyState>()
 
-            if (response.isNullOrBlank()) {
-                log.warn("OpenSky returned empty response")
-                return
-            }
+        for ((index, bbox) in regions.withIndex()) {
+            try {
+                val url = "https://opensky-network.org/api/states/all?$bbox"
+                val request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Basic $credentials")
+                    .timeout(Duration.ofSeconds(30))
+                    .GET()
+                    .build()
 
-            val parsed = objectMapper.readValue(response, OpenSkyResponse::class.java)
-            val states = parsed.states ?: emptyList()
+                val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
 
-            cache.clear()
-            states.forEach { arr ->
-                if (arr.size >= 14) {
-                    val icao24 = (arr[0] as? String)?.trim() ?: ""
-                    val callsign = (arr[1] as? String)?.trim() ?: return@forEach
-                    if (callsign.startsWith("KAL")) {
-                        val lat = toDouble(arr[6])
-                        val lon = toDouble(arr[5])
-                        if (lat != null && lon != null) {
-                            val route = KE_ROUTES[callsign] ?: KE_ROUTES[callsign.trimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9').plus(callsign.filter { it.isDigit() })]
-                            cache[callsign] = OpenSkyState(
-                                icao24 = icao24,
-                                callsign = callsign,
-                                latitude = lat,
-                                longitude = lon,
-                                altitude = toDouble(arr[7]) ?: 0.0,
-                                velocity = toDouble(arr[9]) ?: 0.0,
-                                heading = toDouble(arr[10]) ?: 0.0,
-                                onGround = arr[8] as? Boolean ?: false,
-                                departureAirport = route?.first,
-                                arrivalAirport = route?.second
-                            )
+                if (response.statusCode() != 200) {
+                    log.warn("OpenSky region {} returned HTTP {}", index, response.statusCode())
+                    continue
+                }
+
+                val body = response.body()
+                if (body.isNullOrBlank()) continue
+
+                val parsed = objectMapper.readValue(body, OpenSkyResponse::class.java)
+                val states = parsed.states ?: emptyList()
+
+                states.forEach { arr ->
+                    if (arr.size >= 14) {
+                        val icao24 = (arr[0] as? String)?.trim() ?: ""
+                        val callsign = (arr[1] as? String)?.trim() ?: return@forEach
+                        if (callsign.startsWith("KAL")) {
+                            val lat = toDouble(arr[6])
+                            val lon = toDouble(arr[5])
+                            if (lat != null && lon != null) {
+                                val route = KE_ROUTES[callsign]
+                                found[callsign] = OpenSkyState(
+                                    icao24 = icao24,
+                                    callsign = callsign,
+                                    latitude = lat,
+                                    longitude = lon,
+                                    altitude = toDouble(arr[7]) ?: 0.0,
+                                    velocity = toDouble(arr[9]) ?: 0.0,
+                                    heading = toDouble(arr[10]) ?: 0.0,
+                                    onGround = arr[8] as? Boolean ?: false,
+                                    departureAirport = route?.first,
+                                    arrivalAirport = route?.second
+                                )
+                            }
                         }
                     }
                 }
-            }
 
+                log.debug("OpenSky region {}: {} total, {} KAL", index, states.size, found.size)
+            } catch (e: Exception) {
+                log.warn("OpenSky region {} failed: {} ({})", index, e.message, e.cause?.message ?: "no cause")
+            }
+        }
+
+        if (found.isNotEmpty()) {
+            cache.clear()
+            cache.putAll(found)
             log.info("OpenSky: {} Korean Air aircraft tracked ({} in flight, {} on ground)",
                 cache.size, cache.values.count { !it.onGround }, cache.values.count { it.onGround })
-        } catch (e: Exception) {
-            log.warn("OpenSky poll failed: {}. Using cached data ({} entries)", e.message, cache.size)
+        } else if (cache.isEmpty()) {
+            log.warn("OpenSky: no Korean Air aircraft found in any region")
         }
     }
 
@@ -98,7 +131,6 @@ class OpenSkyClient(
     }
 
     companion object {
-        // Major Korean Air route mapping (callsign → departure, arrival)
         val KE_ROUTES: Map<String, Pair<String, String>> = mapOf(
             "KAL1" to ("ICN" to "LAX"), "KAL2" to ("LAX" to "ICN"),
             "KAL5" to ("ICN" to "LAX"), "KAL6" to ("LAX" to "ICN"),
