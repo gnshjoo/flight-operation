@@ -15,7 +15,7 @@ class CacheConfig {
         val manager = CaffeineCacheManager("statsDaily", "statsAirport", "statsDelayRate")
         manager.setCaffeine(
             Caffeine.newBuilder()
-                .expireAfterWrite(60, TimeUnit.SECONDS)
+                .expireAfterWrite(10, TimeUnit.MINUTES)
                 .maximumSize(100)
         )
         return manager

@@ -52,7 +52,7 @@ class KacApiClient(
         )
     }
 
-    @Scheduled(initialDelay = 3000, fixedRate = 300_000)
+    @Scheduled(initialDelay = 3000, fixedRate = 1_800_000) // 30분
     fun pollFlightStatus() {
         if (!isEnabled()) return
 

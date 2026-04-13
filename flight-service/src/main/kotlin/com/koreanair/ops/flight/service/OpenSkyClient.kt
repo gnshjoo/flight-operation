@@ -24,10 +24,10 @@ class OpenSkyClient(
     private val log = LoggerFactory.getLogger(javaClass)
     private val cache = ConcurrentHashMap<String, OpenSkyState>()
     private var lastFetchTime: Instant = Instant.EPOCH
-    private val cacheTtl = Duration.ofMinutes(5)
+    private val cacheTtl = Duration.ofMinutes(30)
 
     private val httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
+        .connectTimeout(Duration.ofSeconds(30))
         .build()
 
     private val regions = listOf(
